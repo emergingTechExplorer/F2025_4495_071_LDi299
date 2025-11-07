@@ -131,6 +131,67 @@ def make_point_map(df_points: pd.DataFrame, areas_gdf: gpd.GeoDataFrame, highlig
     folium.LayerControl().add_to(m)
     return m
 
+def _safe_bins(series: pd.Series, k: int = 6) -> list:
+    """Build quantile bins robustly for choropleth."""
+    ser = series.replace([np.inf, -np.inf], np.nan).dropna()
+    if ser.empty:
+        return [0, 1]
+    qs = np.unique(np.quantile(ser, np.linspace(0, 1, k + 1)))
+    if len(qs) < 2:
+        qs = np.array([ser.min(), ser.max() + 1e-9])
+    return qs.tolist()
+
+def make_area_choropleth(areas_gdf: gpd.GeoDataFrame, summary_df: pd.DataFrame,
+                         metric_col: str, legend_name: str) -> folium.Map:
+    """Folium choropleth of tree density (or other metric) by Local Area."""
+    g = areas_gdf.merge(
+        summary_df[["LOCAL_AREA", metric_col, "trees", "unique_species"]],
+        left_on="NAME", right_on="LOCAL_AREA", how="left"
+    )
+
+    m = folium.Map(location=[49.2827, -123.1207], zoom_start=12, tiles="CartoDB Positron")
+
+    bins = _safe_bins(g[metric_col], k=6)
+    folium.Choropleth(
+        geo_data=g.to_json(),
+        data=g,
+        columns=["NAME", metric_col],
+        key_on="feature.properties.NAME",
+        fill_color="YlGn",
+        fill_opacity=0.85,
+        line_opacity=0.6,
+        nan_fill_color="#e5e7eb",
+        bins=bins,
+        legend_name=legend_name,
+        name=legend_name,
+    ).add_to(m)
+
+    # Add hover tooltips
+    for _, r in g.iterrows():
+        val = r.get(metric_col, np.nan)
+        name = r.get("NAME", "Unknown")
+        trees = r.get("trees", np.nan)
+        sp = r.get("unique_species", np.nan)
+
+        # Use legend_name instead of hardcoded label
+        if pd.notnull(val):
+            html = f"<b>{name}</b><br>{legend_name}: {val:.0f}"
+        else:
+            html = f"<b>{name}</b><br>{legend_name}: n/a"
+
+        html += f"<br>Total trees: {int(trees) if pd.notnull(trees) else 'n/a'}"
+        html += f"<br>Unique species: {int(sp) if pd.notnull(sp) else 'n/a'}"
+
+        gj = folium.GeoJson(
+            r["geometry"].__geo_interface__,
+            style_function=lambda _: {"color": "#444", "weight": 0.5, "fillOpacity": 0},
+            tooltip=folium.Tooltip(html),
+        )
+        gj.add_to(m)
+
+    folium.LayerControl().add_to(m)
+    return m
+
 # -----------------------------
 # Main App
 # -----------------------------
@@ -194,7 +255,7 @@ if "DIAMETER" in df.columns:
 # -----------------------------
 # Tabs
 # -----------------------------
-tab1, tab2 = st.tabs(["Explore Trees", "Neighbourhood Summary"])
+tab1, tab2 = st.tabs(["Explore Trees", "Neighbourhood Overview"])
 
 # Explore Trees tab
 with tab1:
@@ -244,10 +305,29 @@ with tab1:
         else:
             st.info("No planting year field available.")
 
-# Neighbourhood Summary tab (original PR2 content)
+# Neighbourhood Overview
 with tab2:
-    st.subheader("Neighbourhood Summary (All Trees)")
+    st.subheader("Density Choropleth & Ranking")
+
     summary = summarize_neighbourhoods(trees, areas)
-    st.dataframe(summary, use_container_width=True)
+
+    st.markdown("**Tree Density (trees per km²)**")
+    choromap = make_area_choropleth(areas, summary, metric_col="trees_per_km2", legend_name="Trees per km²")
+    st_folium(choromap, height=560, width=None)
+
+    st.markdown("**Neighbourhood Ranking (by Density)**")
+    rank_df = summary[["LOCAL_AREA", "trees", "unique_species", "avg_diameter", "oldest_year", "newest_year", "AREA_KM2", "trees_per_km2"]].copy()
+    rank_df = rank_df.sort_values("trees_per_km2", ascending=False).reset_index(drop=True)
+    rank_df_display = rank_df.rename(columns={
+        "LOCAL_AREA": "Local Area",
+        "trees": "Trees",
+        "unique_species": "Unique Species",
+        "avg_diameter": "Avg Diameter (in)",
+        "oldest_year": "Oldest Planting Year",
+        "newest_year": "Newest Planting Year",
+        "AREA_KM2": "Area (km²)",
+        "trees_per_km2": "Trees/km²",
+    })
+    st.dataframe(rank_df_display, use_container_width=True, hide_index=True)
 
 st.caption("Data: City of Vancouver Open Data (Public Trees & Local Area Boundaries).")
