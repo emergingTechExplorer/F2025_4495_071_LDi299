@@ -4,4 +4,5 @@ streamlit
 altair
 geopandas
 folium
-streamlit_folium 
+streamlit_folium
+openai

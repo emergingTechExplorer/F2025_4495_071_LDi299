@@ -6,6 +6,12 @@ import geopandas as gpd
 import folium
 from streamlit_folium import st_folium
 
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
 st.set_page_config(page_title="Urban Greening Explorer", layout="wide")
 PRIMARY = "#2E7D32"
 
@@ -429,6 +435,69 @@ with tab3:
             "trees_per_km2": "Trees/km²",
         })
         st.dataframe(winners_display, use_container_width=True, hide_index=True)
+
+        # -----------------------------
+        # AI SUMMARY SECTION
+        # -----------------------------
+        st.markdown("### AI Summary of Green Comfort Zones")
+
+        if not OPENAI_AVAILABLE:
+            st.info("To enable AI summaries, install the `openai` Python package.")
+        elif "OPENAI_API_KEY" not in st.secrets:
+            st.info(
+                "To enable AI summaries, add your OpenAI API key to `.streamlit/secrets.toml` "
+                "as `OPENAI_API_KEY = \"sk-...\"`."
+            )
+        else:
+            if st.button("Generate AI Summary"):
+                # Build a compact description of the winners to send to the model
+                summary_rows = winners_display.to_dict(orient="records")
+                stats_text_lines = []
+                for row in summary_rows:
+                    stats_text_lines.append(
+                        f"{row['Local Area']}: {row['Trees']} trees, "
+                        f"{row['Unique Species']} species, "
+                        f"{row['Area (km²)']:.2f} km², "
+                        f"{row['Trees/km²']:.0f} trees/km²"
+                    )
+                stats_text = "\n".join(stats_text_lines)
+
+                prompt = (
+                    "You are helping analyze urban tree data for Vancouver.\n\n"
+                    "The following neighbourhoods have been identified as 'Green Comfort Zones' "
+                    "because they have high tree density. For each neighbourhood, you are given "
+                    "trees, unique species, area and trees per km².\n\n"
+                    "Data:\n"
+                    f"{stats_text}\n\n"
+                    "Write a short, clear summary (2–3 paragraphs) explaining:\n"
+                    "- Which neighbourhoods stand out and why\n"
+                    "- Any patterns you see in density and species richness\n"
+                    "- How this could be useful for urban planning or public communication\n\n"
+                    "Avoid repeating the raw numbers; focus on interpretation and insights."
+                )
+
+                try:
+                    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+                    model_name = st.secrets.get("OPENAI_MODEL", "gpt-5-mini")
+
+                    with st.spinner("Generating AI summary..."):
+                        resp = client.responses.create(
+                            model=model_name,
+                            input=prompt,
+                            max_output_tokens=300,
+                            reasoning={"effort": "minimal"}, 
+                        )
+
+                    summary_text = getattr(resp, "output_text", None)
+
+                    if not summary_text:
+                        summary_text = "AI summary generated, but no text output was returned."
+
+                    st.markdown(summary_text)
+
+                except Exception as e:
+                    st.caption(f"AI summary could not be generated (error: {e}).")
+
     else:
         st.info("Not enough valid density data to compute Green Comfort Zones.")
 
