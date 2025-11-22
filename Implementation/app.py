@@ -76,6 +76,69 @@ def summarize_neighbourhoods(trees_with_area: pd.DataFrame, areas_gdf: gpd.GeoDa
     return out
 
 # -----------------------------
+# Green Comfort Zone helpers
+# -----------------------------
+def compute_green_comfort_zones(summary_df: pd.DataFrame, q: float = 0.8):
+    """
+    Define Green Comfort Zones as neighbourhoods in the top q quantile
+    of tree density (trees_per_km2).
+    """
+    ser = summary_df["trees_per_km2"].replace([np.inf, -np.inf], np.nan).dropna()
+    if ser.empty:
+        return np.nan, pd.Series(False, index=summary_df.index)
+    thr = ser.quantile(q)
+    mask = summary_df["trees_per_km2"] >= thr
+    return thr, mask
+
+def make_green_comfort_map(areas_gdf: gpd.GeoDataFrame, summary_df: pd.DataFrame, mask: pd.Series) -> folium.Map:
+    """
+    Folium map highlighting Green Comfort Zones (top density neighbourhoods)
+    in green, others not shown.
+    """
+    winners = summary_df.loc[mask, "LOCAL_AREA"].dropna().unique().tolist()
+    m = folium.Map(location=[49.2827, -123.1207], zoom_start=12, tiles="CartoDB Positron")
+
+    if not winners:
+        return m
+
+    sel = areas_gdf[areas_gdf["NAME"].isin(winners)]
+    if sel.empty:
+        return m
+
+    def style_function(_):
+        return {
+            "color": PRIMARY,
+            "weight": 2,
+            "fillColor": PRIMARY,
+            "fillOpacity": 0.35,
+        }
+
+    gmerged = sel.merge(
+        summary_df[["LOCAL_AREA", "trees_per_km2", "trees", "unique_species"]],
+        left_on="NAME", right_on="LOCAL_AREA", how="left",
+    )
+
+    for _, r in gmerged.iterrows():
+        dens = r.get("trees_per_km2", np.nan)
+        trees = r.get("trees", np.nan)
+        sp = r.get("unique_species", np.nan)
+        html = f"<b>{r.get('NAME', 'Unknown')}</b><br>"
+        html += f"Trees/km²: {dens:.0f}<br>" if pd.notnull(dens) else "Trees/km²: n/a<br>"
+        html += f"Total trees: {int(trees) if pd.notnull(trees) else 'n/a'}<br>"
+        html += f"Unique species: {int(sp) if pd.notnull(sp) else 'n/a'}"
+
+        gj = folium.GeoJson(
+            r["geometry"].__geo_interface__,
+            style_function=style_function,
+            tooltip=folium.Tooltip(html),
+            name=r.get("NAME", "Comfort zone"),
+        )
+        gj.add_to(m)
+
+    folium.LayerControl().add_to(m)
+    return m
+
+# -----------------------------
 # Map helpers
 # -----------------------------
 def make_point_map(df_points: pd.DataFrame, areas_gdf: gpd.GeoDataFrame, highlight_area: str | None, max_points: int = 6000):
@@ -208,6 +271,9 @@ with st.spinner("Loading datasets..."):
     trees_raw = trees_raw[trees_raw["LATITUDE"].between(-90, 90) & trees_raw["LONGITUDE"].between(-180, 180)]
     trees = attach_neighbourhood(trees_raw, areas)
 
+# Precompute neighbourhood summary for Neighbourhood Overview + Comfort Zones
+summary = summarize_neighbourhoods(trees, areas)
+
 # -----------------------------
 # Sidebar filters (apply to Explore tab)
 # -----------------------------
@@ -255,7 +321,7 @@ if "DIAMETER" in df.columns:
 # -----------------------------
 # Tabs
 # -----------------------------
-tab1, tab2 = st.tabs(["Explore Trees", "Neighbourhood Overview"])
+tab1, tab2, tab3 = st.tabs(["Explore Trees", "Neighbourhood Overview", "Green Comfort Zones"])
 
 # Explore Trees tab
 with tab1:
@@ -309,8 +375,6 @@ with tab1:
 with tab2:
     st.subheader("Density Choropleth & Ranking")
 
-    summary = summarize_neighbourhoods(trees, areas)
-
     st.markdown("**Tree Density (trees per km²)**")
     choromap = make_area_choropleth(areas, summary, metric_col="trees_per_km2", legend_name="Trees per km²")
     st_folium(choromap, height=560, width=None)
@@ -329,5 +393,43 @@ with tab2:
         "trees_per_km2": "Trees/km²",
     })
     st.dataframe(rank_df_display, use_container_width=True, hide_index=True)
+
+# Green Comfort Zones
+with tab3:
+    st.subheader("Green Comfort Zones (High-Density Neighbourhoods)")
+    st.caption(
+        "Green Comfort Zones are defined here as neighbourhoods in the top 20% of tree density (trees per km²). "
+        "This is a simple, rule-based approximation of areas with especially rich tree cover."
+    )
+
+    thr, mask = compute_green_comfort_zones(summary, q=0.8)
+
+    if not np.isnan(thr):
+        total_areas = summary["LOCAL_AREA"].nunique()
+        winners = summary.loc[mask].copy()
+        num_winners = winners["LOCAL_AREA"].nunique()
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Comfort zones found", f"{num_winners} / {total_areas}")
+        c2.metric("Density threshold (80th percentile)", f"{thr:.0f} trees/km²")
+        c3.metric("Median density (context)", f"{summary['trees_per_km2'].median():.0f} trees/km²")
+
+        st.markdown("**Map of Green Comfort Zones**")
+        comfort_map = make_green_comfort_map(areas, summary, mask)
+        st_folium(comfort_map, height=560, width=None)
+
+        st.markdown("**High-Density Neighbourhoods (Green Comfort Zones)**")
+        winners_display = winners[["LOCAL_AREA", "trees", "unique_species", "AREA_KM2", "trees_per_km2"]].copy()
+        winners_display = winners_display.sort_values("trees_per_km2", ascending=False)
+        winners_display = winners_display.rename(columns={
+            "LOCAL_AREA": "Local Area",
+            "trees": "Trees",
+            "unique_species": "Unique Species",
+            "AREA_KM2": "Area (km²)",
+            "trees_per_km2": "Trees/km²",
+        })
+        st.dataframe(winners_display, use_container_width=True, hide_index=True)
+    else:
+        st.info("Not enough valid density data to compute Green Comfort Zones.")
 
 st.caption("Data: City of Vancouver Open Data (Public Trees & Local Area Boundaries).")
