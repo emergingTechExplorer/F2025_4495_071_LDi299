@@ -32,8 +32,26 @@ source env/bin/activate
 pip install -r requirements.txt
 ```
 
+## Create a Streamlit secrets file
+
+```sh
+mkdir .streamlit
+touch .streamlit/secrets.toml
+```
+
+## Add the following entries inside the secrets file
+
+```sh
+OPENAI_API_KEY = “<your_openai_api_key>”
+OPENAI_MODEL = “gpt-5-mini”
+```
+
+If this configuration is omitted, all the functionalities of the application remain intact, but AI summaries are disabled.
+
 ## Run the app
 
 ```sh
 streamlit run app.py
 ```
+
+The application will open automatically in your default browser at http://localhost:8501
