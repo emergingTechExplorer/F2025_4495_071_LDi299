@@ -85,10 +85,6 @@ def summarize_neighbourhoods(trees_with_area: pd.DataFrame, areas_gdf: gpd.GeoDa
 # Green Comfort Zone helpers
 # -----------------------------
 def compute_green_comfort_zones(summary_df: pd.DataFrame, q: float = 0.8):
-    """
-    Define Green Comfort Zones as neighbourhoods in the top q quantile
-    of tree density (trees_per_km2).
-    """
     ser = summary_df["trees_per_km2"].replace([np.inf, -np.inf], np.nan).dropna()
     if ser.empty:
         return np.nan, pd.Series(False, index=summary_df.index)
@@ -97,10 +93,6 @@ def compute_green_comfort_zones(summary_df: pd.DataFrame, q: float = 0.8):
     return thr, mask
 
 def make_green_comfort_map(areas_gdf: gpd.GeoDataFrame, summary_df: pd.DataFrame, mask: pd.Series) -> folium.Map:
-    """
-    Folium map highlighting Green Comfort Zones (top density neighbourhoods)
-    in green, others not shown.
-    """
     winners = summary_df.loc[mask, "LOCAL_AREA"].dropna().unique().tolist()
     m = folium.Map(location=[49.2827, -123.1207], zoom_start=12, tiles="CartoDB Positron")
 
@@ -201,7 +193,6 @@ def make_point_map(df_points: pd.DataFrame, areas_gdf: gpd.GeoDataFrame, highlig
     return m
 
 def _safe_bins(series: pd.Series, k: int = 6) -> list:
-    """Build quantile bins robustly for choropleth."""
     ser = series.replace([np.inf, -np.inf], np.nan).dropna()
     if ser.empty:
         return [0, 1]
@@ -212,7 +203,6 @@ def _safe_bins(series: pd.Series, k: int = 6) -> list:
 
 def make_area_choropleth(areas_gdf: gpd.GeoDataFrame, summary_df: pd.DataFrame,
                          metric_col: str, legend_name: str) -> folium.Map:
-    """Folium choropleth of tree density (or other metric) by Local Area."""
     g = areas_gdf.merge(
         summary_df[["LOCAL_AREA", metric_col, "trees", "unique_species"]],
         left_on="NAME", right_on="LOCAL_AREA", how="left"
@@ -384,7 +374,7 @@ with tab1:
             else:
                 st.info("No planting year field available.")
 
-# Neighbourhood Overview
+# Neighbourhood Overview tab
 with tab2:
     st.subheader("Density Choropleth & Ranking")
 
@@ -407,7 +397,7 @@ with tab2:
     })
     st.dataframe(rank_df_display, use_container_width=True, hide_index=True)
 
-# Green Comfort Zones
+# Green Comfort Zones tab
 with tab3:
     st.subheader("Green Comfort Zones (High-Density Neighbourhoods)")
 
@@ -451,7 +441,7 @@ with tab3:
         st.dataframe(winners_display, use_container_width=True, hide_index=True)
 
         # -----------------------------
-        # AI SUMMARY SECTION
+        # AI Summary Section
         # -----------------------------
         st.markdown("### AI Summary of Green Comfort Zones")
 
@@ -469,7 +459,6 @@ with tab3:
             )
         else:
             if st.button("Generate AI Summary"):
-                # Build a compact description of the winners to send to the model
                 summary_rows = winners_display.to_dict(orient="records")
                 stats_text_lines = []
                 for row in summary_rows:
